@@ -1717,7 +1717,41 @@ function SettingsPanel({ settings, onSave, onClose, items, onImport }) {
   const fr = useRef(null);
 
   const expJSON = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(items, null, 2)], { type: "application/json" })); a.download = `sfc-collection-${new Date().toISOString().slice(0,10)}.json`; a.click(); };
-  const impJSON = (e) => { const file = e.target.files[0]; if (!file) return; const r = new FileReader(); r.onload = (ev) => { try { const d = JSON.parse(ev.target.result); if (Array.isArray(d)) { onImport(d); setMsg(`${d.length}件インポート完了`); } } catch { setMsg("読み込み失敗"); } }; r.readAsText(file); };
+  const impJSON = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const r = new FileReader();
+    r.onload = (ev) => {
+      try {
+        const text = ev.target.result;
+        // Try JSON first
+        if (file.name.endsWith('.json')) {
+          const d = JSON.parse(text);
+          if (Array.isArray(d)) { onImport(d); setMsg(d.length + "件インポート完了"); }
+        }
+        // CSV import
+        else if (file.name.endsWith('.csv')) {
+          const lines = text.split('\n').filter(l => l.trim());
+          if (lines.length < 2) { setMsg("CSVが空です"); return; }
+          const hdr = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+          const ti = hdr.indexOf('タイトル');
+          if (ti < 0) { setMsg("「タイトル」列が見つかりません"); return; }
+          const si = hdr.indexOf('状態'), pi = hdr.indexOf('購入価格'), fi = hdr.indexOf('購入元');
+          const items = [];
+          for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].match(/(".*?"|[^,]*)/g)?.map(c => c.replace(/^"|"$/g, '').trim()) || [];
+            const title = cols[ti];
+            if (!title) continue;
+            items.push(newItem({ title, status: cols[si]||null, owned: true, purchasePrice: cols[pi]?Number(cols[pi]):null, purchaseFrom: cols[fi]||"" }));
+          }
+          if (items.length > 0) { onImport(items); setMsg(items.length + "件インポート完了"); }
+          else { setMsg("インポートできるデータがありません"); }
+        } else {
+          setMsg("JSONまたはCSVファイルを選択してください");
+        }
+      } catch(err) { console.error(err); setMsg("読み込み失敗"); }
+    };
+    r.readAsText(file);
+  };
 
   const expCSV = () => {
     const h = ["タイトル","状態","所持","箱","箱状態","説明書","説明書状態","カートリッジ状態","お気に入り","バリアント","タグ","購入価格","購入日","購入元","メモ","メーカー","発売日","ジャンル","定価"];
@@ -1728,32 +1762,24 @@ function SettingsPanel({ settings, onSave, onClose, items, onImport }) {
 
   const expXLSX = () => {
     try {
-      const headers = ["タイトル","状態","所持","箱","箱状態","説明書","説明書状態","カートリッジ状態","お気に入り","バリアント","タグ","購入価格","購入日","購入元","メモ","メーカー","発売日","ジャンル","定価"];
-      const rows = items.map(i => {
-        const db = getDBInfo(i.title);
-        return [i.title, i.status||"", i.owned?"○":"×", i.hasBox?"○":"×", i.boxCondition||"", i.hasManual?"○":"×", i.manualCondition||"", i.cartCondition||"", i.favorite?"★":"", i.variant||"", (i.tags||[]).join("/"), i.purchasePrice||"", i.purchaseDate||"", i.purchaseFrom||"", i.memo||"", db?.maker||"", db?.releaseDate||"", db?.genre||"", db?.retailPrice||""];
-      });
-      // Build HTML table for Excel compatibility
-      let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>SFC Collection</x:Name></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body><table>';
-      html += '<tr>' + headers.map(h => `<th style="background:#7b68ee;color:#fff;font-weight:bold;padding:4px 8px">${h}</th>`).join('') + '</tr>';
-      rows.forEach(r => {
-        html += '<tr>' + r.map((c, ci) => {
-          const v = String(c).replace(/</g,'&lt;').replace(/>/g,'&gt;');
-          const isNum = ci === 11 || ci === 18;
-          return isNum && v ? `<td style="padding:2px 6px" x:num="${v}">${v}</td>` : `<td style="padding:2px 6px">${v}</td>`;
-        }).join('') + '</tr>';
+      const owned = items.filter(i => i.owned);
+      const headers = ["No","タイトル","メーカー","発売日","ジャンル","定価","状態","購入価格","箱","説明書","カートリッジ","★","タグ","購入元","メモ"];
+      const hs = 'style="background:#7b68ee;color:#fff;font-weight:bold;padding:4px 8px;border:1px solid #5a4fd0;font-size:11px;white-space:nowrap"';
+      let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>タピコレSFC</x:Name></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body><table border="1" cellspacing="0">';
+      html += '<tr>' + headers.map(h => '<th '+hs+'>'+h+'</th>').join('') + '</tr>';
+      owned.forEach((item, idx) => {
+        const db = getDBInfo(item.title);
+        const bg = idx % 2 === 0 ? "#fff" : "#f5f3ff";
+        const cs = (n) => 'style="padding:3px 6px;border:1px solid #ddd;font-size:11px;background:'+bg+(n?';text-align:right':'')+'"';
+        const vals = [idx+1, item.title, db?.maker||"", db?.releaseDate||"", db?.genre||"", db?.retailPrice||"", item.status||"", item.purchasePrice||"", item.hasBox?"○":"×", item.hasManual?"○":"×", item.cartCondition||"", item.favorite?"★":"", (item.tags||[]).join("/"), item.purchaseFrom||"", item.memo||""];
+        html += '<tr>' + vals.map((c, ci) => '<td '+cs(ci===0||ci===5||ci===7)+'>'+String(c).replace(/</g,'&lt;')+'</td>').join('') + '</tr>';
       });
       html += '</table></body></html>';
       const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `sfc-collection-${new Date().toISOString().slice(0,10)}.xls`;
-      a.click();
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = "tapikore-sfc-" + new Date().toISOString().slice(0,10) + ".xls"; a.click();
       setMsg("Excel出力完了！");
-    } catch(err) {
-      console.error(err);
-      setMsg("Excel出力に失敗しました");
-    }
+    } catch(err) { console.error(err); setMsg("Excel出力に失敗しました"); }
   };
 
   const is = { width: "100%", padding: "8px 12px", background: T.bg, border: `1px solid ${T.bd}`, borderRadius: 6, color: T.tx, fontSize: "0.9rem", outline: "none" };
@@ -1769,8 +1795,8 @@ function SettingsPanel({ settings, onSave, onClose, items, onImport }) {
         <button onClick={expXLSX} style={{ ...bs, background: "#217346" + "22", border: "1px solid #21734644", color: "#4CAF50" }}>📗 Excelエクスポート (.xls)</button>
         <button onClick={expCSV} style={bs}>📊 CSVエクスポート</button>
         <button onClick={expJSON} style={bs}>📤 JSONエクスポート</button>
-        <button onClick={() => fr.current?.click()} style={bs}>📥 JSONインポート</button>
-        <input ref={fr} type="file" accept=".json" onChange={impJSON} style={{ display: "none" }} />
+        <button onClick={() => fr.current?.click()} style={bs}>📥 インポート（JSON / CSV）</button>
+        <input ref={fr} type="file" accept=".json,.csv" onChange={impJSON} style={{ display: "none" }} />
         {msg && <p style={{ fontSize: "0.8rem", color: T.ac, margin: "8px 0" }}>{msg}</p>}
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={onClose} style={{ flex: 1, padding: "12px", borderRadius: 10, border: `1px solid ${T.bd}`, background: "transparent", color: T.ts, cursor: "pointer", fontSize: "0.9rem" }}>閉じる</button>
@@ -2153,6 +2179,14 @@ export default function App() {
           <span style={{ fontSize: "0.6rem", color: T.td, letterSpacing: 1 }}>powered by</span>
           <span style={{ fontSize: "0.85rem", fontWeight: 700, color: T.ts, letterSpacing: "0.05em" }}>Tapiocaism</span>
         </a>
+        <details style={{ marginTop: 20, textAlign: "left" }}>
+          <summary style={{ fontSize: "0.72rem", color: T.td, cursor: "pointer", textAlign: "center" }}>📱 ホーム画面に追加する方法</summary>
+          <div style={{ marginTop: 10, padding: "12px 14px", background: T.sf, borderRadius: 10, fontSize: "0.7rem", color: T.ts, lineHeight: 1.8, border: `1px solid ${T.bd}` }}>
+            <div style={{ marginBottom: 8 }}><b style={{ color: T.tx }}>iPhone（Safari）</b><br />下部の共有ボタン（□↑）→「ホーム画面に追加」</div>
+            <div style={{ marginBottom: 8 }}><b style={{ color: T.tx }}>Android（Chrome）</b><br />右上の⋮メニュー →「ホーム画面に追加」</div>
+            <div><b style={{ color: T.tx }}>PC（Chrome）</b><br />アドレスバー右のインストールアイコン、または⋮メニュー →「アプリをインストール」</div>
+          </div>
+        </details>
       </div>
 
       {editItem && <EditPanel item={editItem} onSave={doSave} onDelete={doDelete} onClose={() => setEditItem(null)} existingTitles={existingTitles} />}
