@@ -1754,32 +1754,21 @@ function SettingsPanel({ settings, onSave, onClose, items, onImport }) {
   };
 
   const expCSV = () => {
-    const h = ["タイトル","状態","所持","箱","箱状態","説明書","説明書状態","カートリッジ状態","お気に入り","バリアント","タグ","購入価格","購入日","購入元","メモ","メーカー","発売日","ジャンル","定価"];
-    const rows = items.map(i => { const db = getDBInfo(i.title); return [i.title,i.status||"",i.owned?"○":"×",i.hasBox?"○":"×",i.boxCondition||"",i.hasManual?"○":"×",i.manualCondition||"",i.cartCondition||"",i.favorite?"★":"",i.variant||"",(i.tags||[]).join("/"),i.purchasePrice||"",i.purchaseDate||"",i.purchaseFrom||"",i.memo||"",db?.maker||"",db?.releaseDate||"",db?.genre||"",db?.retailPrice||""]; });
-    const csv = [h,...rows].map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\uFEFF"+csv], { type: "text/csv;charset=utf-8" })); a.download = `sfc-collection-${new Date().toISOString().slice(0,10)}.csv`; a.click();
-  };
-
-  const expXLSX = () => {
-    try {
-      const owned = items.filter(i => i.owned);
-      const headers = ["No","タイトル","メーカー","発売日","ジャンル","定価","状態","購入価格","箱","説明書","カートリッジ","★","タグ","購入元","メモ"];
-      const hs = 'style="background:#7b68ee;color:#fff;font-weight:bold;padding:4px 8px;border:1px solid #5a4fd0;font-size:11px;white-space:nowrap"';
-      let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>タピコレSFC</x:Name></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body><table border="1" cellspacing="0">';
-      html += '<tr>' + headers.map(h => '<th '+hs+'>'+h+'</th>').join('') + '</tr>';
-      owned.forEach((item, idx) => {
-        const db = getDBInfo(item.title);
-        const bg = idx % 2 === 0 ? "#fff" : "#f5f3ff";
-        const cs = (n) => 'style="padding:3px 6px;border:1px solid #ddd;font-size:11px;background:'+bg+(n?';text-align:right':'')+'"';
-        const vals = [idx+1, item.title, db?.maker||"", db?.releaseDate||"", db?.genre||"", db?.retailPrice||"", item.status||"", item.purchasePrice||"", item.hasBox?"○":"×", item.hasManual?"○":"×", item.cartCondition||"", item.favorite?"★":"", (item.tags||[]).join("/"), item.purchaseFrom||"", item.memo||""];
-        html += '<tr>' + vals.map((c, ci) => '<td '+cs(ci===0||ci===5||ci===7)+'>'+String(c).replace(/</g,'&lt;')+'</td>').join('') + '</tr>';
-      });
-      html += '</table></body></html>';
-      const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = "tapikore-sfc-" + new Date().toISOString().slice(0,10) + ".xls"; a.click();
-      setMsg("Excel出力完了！");
-    } catch(err) { console.error(err); setMsg("Excel出力に失敗しました"); }
+    // Full 1447 title list with owned item info filled in
+    const itemMap = new Map();
+    items.forEach(i => itemMap.set(i.title, i));
+    const h = ["No","タイトル","メーカー","発売日","ジャンル","定価","所持","状態","購入価格","箱","説明書","カートリッジ","★","タグ","購入元","メモ"];
+    const rows = SFC_DB.map(([t, m, d, g, p, n], idx) => {
+      const item = itemMap.get(t);
+      if (item) {
+        return [idx+1, t, m, d, g, p, "○", item.status||"", item.purchasePrice||"", item.hasBox?"○":"×", item.hasManual?"○":"×", item.cartCondition||"", item.favorite?"★":"", (item.tags||[]).join("/"), item.purchaseFrom||"", item.memo||""];
+      }
+      return [idx+1, t, m, d, g, p, "", "", "", "", "", "", "", "", "", ""];
+    });
+    const csv = [h,...rows].map(r => r.map(c => '"'+String(c).replace(/"/g,'""')+'"').join(",")).join("\n");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\uFEFF"+csv], { type: "text/csv;charset=utf-8" }));
+    a.download = "tapikore-sfc-" + new Date().toISOString().slice(0,10) + ".csv"; a.click();
+    setMsg("CSV出力完了！（Excelで開けます）");
   };
 
   const is = { width: "100%", padding: "8px 12px", background: T.bg, border: `1px solid ${T.bd}`, borderRadius: 6, color: T.tx, fontSize: "0.9rem", outline: "none" };
@@ -1792,8 +1781,7 @@ function SettingsPanel({ settings, onSave, onClose, items, onImport }) {
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}><div style={{ width: 40, height: 4, borderRadius: 2, background: T.bd }} /></div>
         <h3 style={{ color: T.tx, margin: "0 0 20px", fontSize: "1.1rem", fontWeight: 700 }}>設定</h3>
         <h4 style={{ color: T.ts, fontSize: "0.8rem", marginBottom: 12 }}>データ管理</h4>
-        <button onClick={expXLSX} style={{ ...bs, background: "#217346" + "22", border: "1px solid #21734644", color: "#4CAF50" }}>📗 Excelエクスポート (.xls)</button>
-        <button onClick={expCSV} style={bs}>📊 CSVエクスポート</button>
+        <button onClick={expCSV} style={{ ...bs, background: "#217346" + "22", border: "1px solid #21734644", color: "#4CAF50" }}>📗 全タイトルリスト出力（CSV）</button>
         <button onClick={expJSON} style={bs}>📤 JSONエクスポート</button>
         <button onClick={() => fr.current?.click()} style={bs}>📥 インポート（JSON / CSV）</button>
         <input ref={fr} type="file" accept=".json,.csv" onChange={impJSON} style={{ display: "none" }} />
